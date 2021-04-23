@@ -216,6 +216,14 @@ in
 end;
 "
 
+(* ============================================================ *)
+
+(* TODO: document *)
+let parse_exp s = 
+  match P.parse s with
+  | Right e -> e
+  | Left x -> stuck x
+
 (* Q0  : Get familiar with the external syntax of MiniML *)
 let parse_tests : (string * (string, exp) either) list = [
     (* Provide your tests for the parser *)
@@ -260,15 +268,99 @@ let parse_tests : (string * (string, exp) either) list = [
       )
     )
   );
+  ( "let fun fact (x : int) : int = if x = 0 then 1 else x * fact(x - 1) in fact 5 end;",
+    Right (Let (
+      [Val (
+        Rec ("fact", TArrow (TInt, TInt),
+          Fn ("x", Some TInt, 
+            If (
+              Primop (Equals, [Var "x"; Int 0]), 
+              Int 1, 
+              Primop (Times, [Var "x"; Apply (Var "fact", Primop(Minus, [Var "x"; Int 1]))])
+            )
+          )
+        ),
+        "fact"
+      )],
+      Apply (Var "fact", Int 5)
+      )
+    )
+  );
+  ( "let fun apply (f : int -> int) : int -> int = fn x : int => f(x) in apply (fn x => x * 3) 100 end;",
+    Right (
+      Let (
+        [Val (
+          Fn (
+            "f",
+            Some (TArrow (TInt, TInt)),
+            Fn (
+              "x",
+              Some (TInt),
+              Apply (Var "f", Var "x")
+            )
+          ),
+          "apply"
+        )],
+        Apply (
+          Apply (
+            Var "apply", 
+            Fn (
+              "x",
+              Some (TInt),
+              Primop (Times, [Var "x"; Int 3])
+            )
+          ),
+          Int 100
+        )
+      )
+    )
+  );
 ]
 
-
 let free_vars_tests : (exp * name list) list = [ 
-  (Int 10, [])
+  (Int 10, []);
+  (parse_exp "true;", []);
+  (parse_exp "if x then (let val y = x * x in y + 1 end) else x + y;", ["x"; "y"]);
+  (parse_exp "x + 3;", ["x"]);
+  (parse_exp "(4, true, y);", ["y"]);
+  (parse_exp "fn x => y + x;", ["y"]);
+  (parse_exp "fn x => fn y => x y;", []); 
+  (parse_exp "let val x = 5 + y val (x,y) = (3,4) in x end;", ["y"]); 
+  (parse_exp "let val x = true name y = z + 1 in x end;", ["z"]); 
+  (parse_exp "let val f = let val ten = 10 in (fn y => ten) end in g 44 end;", ["g"])
 ]
 
 (* Q1  : Find the free variables in an expression *)
-let rec free_vars (e : exp) : name list = raise NotImplemented
+let rec free_vars (e : exp) : name list = 
+  match e with 
+  | Int _ -> []
+  | Bool _ -> []
+  | If (e1, e2, e3) -> union (union (free_vars e1) (free_vars e2)) (free_vars e3)
+  | Primop (_, l) -> union_list (List.map free_vars l)
+  | Tuple l -> union_list (List.map free_vars l)
+  | Fn (x, _, e) 
+  | Rec (x, _, e) -> delete [x] (free_vars e)
+  | Apply (e1, e2) -> union (free_vars e1) (free_vars e2)
+  | Var x -> [x]
+  | Anno (e, _) -> free_vars e
+  | Let (xs, e) -> 
+    let bounded_vars = 
+      let rec find_bounded_vars l =
+        match l with
+        | [] -> []
+        | h::t -> 
+          match h with 
+          | Val (e, x)
+          | ByName (e, x) -> union [x] (find_bounded_vars t)
+          | Valtuple (e, xs) -> union xs (find_bounded_vars t)
+        in
+    find_bounded_vars xs
+    and exp_list = 
+      let get_exp d = 
+        let Val (e, _) | Valtuple (e, _) | ByName (e, _) = d in e
+      in
+    List.map get_exp xs in
+    union (union_list (List.map free_vars exp_list)) (delete bounded_vars (free_vars e))
 
 
 let unused_vars_tests : (exp * name list) list = [
