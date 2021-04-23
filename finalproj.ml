@@ -317,6 +317,7 @@ let parse_tests : (string * (string, exp) either) list = [
   );
 ]
 
+(* TODO: change and add tests *)
 let free_vars_tests : (exp * name list) list = [ 
   (Int 10, []);
   (parse_exp "true;", []);
@@ -333,8 +334,6 @@ let free_vars_tests : (exp * name list) list = [
 (* Q1  : Find the free variables in an expression *)
 let rec free_vars (e : exp) : name list = 
   match e with 
-  | Int _ -> []
-  | Bool _ -> []
   | If (e1, e2, e3) -> union (union (free_vars e1) (free_vars e2)) (free_vars e3)
   | Primop (_, l) -> union_list (List.map free_vars l)
   | Tuple l -> union_list (List.map free_vars l)
@@ -343,31 +342,72 @@ let rec free_vars (e : exp) : name list =
   | Apply (e1, e2) -> union (free_vars e1) (free_vars e2)
   | Var x -> [x]
   | Anno (e, _) -> free_vars e
-  | Let (xs, e) -> 
-    let bounded_vars = 
-      let rec find_bounded_vars l =
-        match l with
-        | [] -> []
-        | h::t -> 
-          match h with 
-          | Val (e, x)
-          | ByName (e, x) -> union [x] (find_bounded_vars t)
-          | Valtuple (e, xs) -> union xs (find_bounded_vars t)
-        in
-    find_bounded_vars xs
-    and exp_list = 
-      let get_exp d = 
-        let Val (e, _) | Valtuple (e, _) | ByName (e, _) = d in e
-      in
-    List.map get_exp xs in
-    union (union_list (List.map free_vars exp_list)) (delete bounded_vars (free_vars e))
+  | Let (l, e) -> 
+    let bv = find_bounded_vars l
+    and el = decs_exps l in
+    union (union_list (List.map free_vars el)) (delete bv (free_vars e))
+  | _ -> []
 
+and find_bounded_vars l =
+  match l with
+  | [] -> []
+  | h::t -> 
+    match h with 
+    | Val (e, x)
+    | ByName (e, x) -> x::(find_bounded_vars t)
+    | Valtuple (e, xs) -> xs @ (find_bounded_vars t)
+and decs_exps l = 
+  let get_exp d = 
+    let Val (e, _) | Valtuple (e, _) | ByName (e, _) = d in e
+  in
+  List.map get_exp l 
 
 let unused_vars_tests : (exp * name list) list = [
+  (parse_exp "let val x = 3 in 4 end;", ["x"]);
+  (parse_exp "let val x = true in let val y = 4 in x + 5 end end;", ["y"]);
+  (parse_exp "let val x = 3 in let val x = 4 in x + x end end;", ["x"]);
+  (parse_exp "let val x = true name y = z + 1 in x end;", ["y"]);
+  (parse_exp "let val x = 3 in 4 end;", ["x"]);
+  (parse_exp "let val x = 3 in let val y = x in 5 end end;", ["y"]);
+  (parse_exp "let val x = true in let val y = 4 in x + 5 end end;", ["y"]);
+  (parse_exp "let val x = 3 in (let val x = 4 in x + x end) end;", ["x"]); (* first occurence of x is unused *)
+  (parse_exp "let val x = 2 name y = 3 in x + 2 end;", ["y"]); 
+  (parse_exp "let val x = 1 val x = 1 in x + 1 end;", ["x"]);
+  (parse_exp "let val x = 5 val (x,y) = (3,4) in x end;", ["x";"y"]);
+  (parse_exp "let name x = true name x = 1 in x end;", ["x"]);
+  (parse_exp "(fn y => 2) true;", ["y"]);
+  (parse_exp "let fun fact (x : int) : int = if x = 0 then 1 else x * fact(x - 1) in fact 5 end;", []);
+  (parse_exp "let fun test ( x : int ) : int = 3 in 4 end;", ["test"; "x"]); 
+  (parse_exp "(fn y => let val y = 2 in 3 + y end) true;", ["y"]);
+  (parse_exp "10 * 10 + 33;", []); 
+  (parse_exp "let val f = let val ten = 10 in (fn y => ten) : int -> int end in f 55 end;", ["y"])
 ]
 
 (* Q2  : Check variables are in use *)
-let rec unused_vars (e : exp) : name list = raise NotImplemented
+let rec unused_vars (e : exp) : name list = 
+  match e with 
+  | If (e1, e2, e3) -> union (unused_vars e1) (union (unused_vars e2) (unused_vars e3))
+  | Primop (_, l) -> union_list (List.map unused_vars l)
+  | Tuple l -> union_list (List.map unused_vars l)
+  | Apply (e1, e2) -> union (unused_vars e1) (unused_vars e2)
+  | Anno (e, _) -> unused_vars e
+  | Fn (x, _, e) -> union (delete (free_vars e) [x]) (unused_vars e)
+  | Rec (_, _, e) -> unused_vars e (* TODO: findout why Fn func doesnt work *)
+  | Let (l, e) -> 
+    let bv = find_bounded_vars l
+    and fv = free_vars e 
+    and el = decs_exps l in
+    union (union (remove fv bv) (unused_vars e)) (union_list (List.map unused_vars el))
+  | _ -> []
+
+and remove rs set =
+  match set with
+  | [] -> []
+  | h::t ->
+    if member h rs then
+       t
+    else
+      h :: remove rs t
 
 
 let subst_tests : (((exp * name) * exp) * exp) list = [
