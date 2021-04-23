@@ -446,43 +446,113 @@ let rec subst ((e', x) : exp * name) (e : exp) : exp =
   | Anno (e, t) -> Anno (subst (e', x) e, t)
 
   | Let (ds, e2) -> 
-      begin match ds with 
-        | [] -> Let([], subst (e', x) e2)
-        | h::t -> 
-            begin match h with 
-              | Val (e1, y) ->
-                  let e1' = subst (e', x) e1 in
-                  if x = y || member y (free_vars e') then 
-                    begin
-                      let y' = fresh_var y in
-                      let e2' = subst (Var y', y) e2 in (* TODO: substitute in other vars of the Let *)
-                      subst (e', x) (Let(Val(e1', y')::t, e2'))
-                    end
-                  else 
-                    begin
-                      let Let(vl, e2') = subst (e', x) (Let(t, e2)) in
-                      Let(Val(e1', y)::vl, e2')
-                    end
-              | ByName (e1, y) -> 
-                  let e1' = subst (e', x) e1 in
-                  if x = y or member y (free_vars e') then 
-                    begin
-                      let y' = fresh_var y in
-                      let e2' = subst (Var y', y) e2 in (* TODO: substitute in other vars of the Let *)
-                      subst (e', x) (Let(ByName(e1', y')::t, e2'))
-                    end
-                  else 
-                    begin
-                      let Let(vl, e2') = subst (e', x) (Let(t, e2)) in
-                      Let(ByName(e1', y)::vl, e2')
-                    end
-              | Valtuple (e1, ns) -> raise NotImplemented 
-            end 
-      end 
-  | Apply (e1, e2) -> raise NotImplemented
-  | Fn (y, t, e) -> raise NotImplemented
-  | Rec (y, t, e) -> raise NotImplemented
+      let (ds', e2') = help (e', x) ds e2 in
+      Let (ds', e2')
+  | Apply (e1, e2) -> Apply (subst (e', x) e1, subst (e', x) e2)
+  | Fn (y, t, e) -> 
+    if x = y then Fn (y, t, e)
+    else if not (member y (free_vars e')) then 
+      Fn (y, t, subst (e', x) e)
+    else 
+      let y' = fresh_var y in
+      let new_e = replace y y' e in
+      Fn (y', t,  subst (e', x) new_e)
+  | Rec (y, t, e) -> 
+    if x = y then Rec (y, t, e)
+    else if not (member y (free_vars e')) then 
+      Rec (y, t, subst (e', x) e)
+    else 
+      let y' = fresh_var y in
+      let new_e = replace y y' e in
+      Rec (y', t,  subst (e', x) new_e)
 
+and help (e', x) vars e2 =
+  let rec help_rec vars new_vars e2 =
+    match vars with 
+    | [] -> (List.rev new_vars, e2) "TODO: decide to reverse back to og order or not"
+    | h::t -> 
+        match h with 
+        | Val (e1, y) -> 
+            let e1' = subst (e', x) e1 in
+            if x = y then 
+              help_rec t (Val(e1', y)::new_vars) e2
+            else if not (member y (free_vars e')) then 
+              help_rec t (Val(e1', y)::new_vars) (subst (e', x) e2)
+            else 
+              let y' = fresh_var y in
+              let e2' = replace y y' e2 in
+              help_rec t (Val(e1', y')::new_vars) (subst (e', x) e2')
+        | ByName (e1, y) -> 
+            let e1' = subst (e', x) e1 in
+            if x = y then 
+              help_rec t (ByName(e1', y)::new_vars) e2
+            else if not (member y (free_vars e')) then 
+              help_rec t (ByName(e1', y)::new_vars) (subst (e', x) e2)
+            else 
+              let y' = fresh_var y in
+              let e2' = replace y y' e2 in
+              help_rec t (ByName(e1', y')::new_vars) (subst (e', x) e2')
+        | Valtuple (e1, ns) -> 
+          let e1' = subst (e', x) e1 in
+          if member x ns then 
+            help_rec t (Valtuple(e1', ns)::new_vars) e2
+          else 
+            let fv = free_vars e' in
+            let rec rename l ns' e2' = 
+              match l with 
+              | [] -> help_rec t (Valtuple(e1', List.rev ns')::new_vars) (subst (e', x) e2')
+              | y::t -> 
+                if not (member y fv) then 
+                  rename t (y::ns') e2'
+                else 
+                  let y' = fresh_var y in
+                  let e2' = replace y y' e2' in
+                  rename t (y'::ns') e2'
+            in
+            rename ns [] e2
+  in
+  help_rec vars [] e2
+
+and replace x y e = 
+  let rec replace_dec dl new_dl =
+    match dl with
+    | [] -> new_dl
+    | h::t -> 
+        match h with
+        | Val (e1, v) -> 
+            replace_dec t (Val(replace x y e1, if v = x then y else v)::new_dl)
+        | ByName (e1, v) -> 
+            replace_dec t (ByName(replace x y e1, if v = x then y else v)::new_dl)
+        | Valtuple (e1, vs) -> 
+            replace_dec t (Valtuple(replace x y e1, List.map (fun v -> if v = x then y else v) vs)::new_dl)
+  in
+  match e with
+  | If (e1, e2, e3) -> If (replace x y e1, replace x y e2, replace x y e3)
+  | Primop (po, l) -> Primop (po, List.map (replace x y) l)
+  | Tuple l -> Tuple (List.map (replace x y) l)
+  | Fn (v, t, e) -> Fn ((if v = x then y else v), t, replace x y e)
+  | Rec (v, t, e) -> Rec ((if v = x then y else v), t, replace x y e)
+  | Apply (e1, e2) -> Apply (replace x y e1, replace x y e2)
+  | Var v -> if v = x then Var y else Var v
+  | Anno (e, t) -> Anno (replace x y e, t)
+  | Let (dl, e) -> Let (replace_dec dl [], replace x y e)
+  | _ -> e
+
+(*       
+let rec contains_fv l fv = 
+            match l with 
+            | [] -> false
+            | h::t -> 
+              if member h fv then true
+              else contains_fv t fv
+          and find_all l l' =
+            match l with
+            | [] -> []
+            | h::t -> 
+              if member h l' then h :: (find_all t l')
+              else find_all t l'
+          in
+          let fv_clones = find_all ns (free_vars e') in *)
 
 let eval_tests : (exp * exp) list = [
 ]
