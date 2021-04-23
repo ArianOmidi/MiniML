@@ -411,6 +411,23 @@ and remove rs set =
 
 
 let subst_tests : (((exp * name) * exp) * exp) list = [
+  (((Int 5, "x"), If(Bool(true), Var "x", Var "y")), If (Bool true, Int 5, Var "y"));
+  (((Int 5, "y"), parse_exp "fn y => x + y;"), parse_exp "fn y => x + y;");
+  (((Int 5, "x"), parse_exp "fn y => x + y;"), parse_exp "fn y => 5 + y;");
+  (*(((parse_exp "y + 1;", "x"), parse_exp "fn y => x + y;"), parse_exp "fn Y => y + 1 + Y;");*)
+  (((Int 5, "x"), parse_exp "(fn x => x + 1) x;"), parse_exp "(fn x => x + 1) 5;");
+  (((Int 5, "x"), parse_exp "(fn y => y + 1) x;"), parse_exp "(fn y => y + 1) 5;");
+  (((Int 6, "y"), parse_exp "let fun fact (x : int) : int = if x = 0 then 1 else x * fact(x - 1) * y in fact 5 end;"), parse_exp "let fun fact (x : int) : int = if x = 0 then 1 else x * fact(x - 1) * 6 in fact 5 end;");
+  (((Var "y","x"), parse_exp "let val x = 3 + x in x end;"), parse_exp "let val x = 3 + y in x end;");
+  (((Int 69, "x"), parse_exp "let val y = x + 3 in x end;"), parse_exp "let val y = 69 + 3 in 69 end;");
+  (((Var "y","x"), parse_exp "let name x = 3 + x in x end;"), parse_exp "let name x = 3 + y in x end;");
+  (((Int 69, "x"), parse_exp "let name y = x + 3 in x end;"), parse_exp "let name y = 69 + 3 in 69 end;");
+  (((Int 69, "y"), parse_exp "let val x = 5 + y val (x,y) = (3,4) in x end;"), parse_exp "let val x = 5 + 69 val (x,y) = (3,4) in x end;");
+  (((parse_exp "x + 1;", "y"), parse_exp "let val (x,y) = (3,y) in x + y end;"), parse_exp "let val (x,y) = (3,x + 1) in x + y end;");
+  (*(((parse_exp "x + 1;", "y"), parse_exp "let name x = y val (x,y) = (3,y) in x + y end;"), parse_exp "let name X = x + 1 val (x,y) = (3,x + 1) in x + y end;");*)
+  (*(((parse_exp "2 * w;", "x"), parse_exp "let val w = 3 name y = 2 * x in fn x => w * y * x end;"), parse_exp "let val W = 3 name y = 2 * 2 * w in fn x => W * y * x end;");*)
+  (*(((parse_exp "y + 3;", "x"), parse_exp "let name w = x in fn y => x + 2 end;"), parse_exp "let name w = y + 3 in fn Y => y + 3 + 2 end;");*)
+  (*(((parse_exp "y * 2;", "w"), parse_exp "let val x = 3 val y = w * 3 in fn x => w * y * x end;"), parse_exp "let val x = 3 val Y = y * 2 * 3 in fn x => y * 2 * Y * x end;")*)
 ]
 
 (* Q3  : Substitute a variable *)
@@ -428,7 +445,40 @@ let rec subst ((e', x) : exp * name) (e : exp) : exp =
   | Tuple es -> Tuple (List.map (subst (e', x)) es)
   | Anno (e, t) -> Anno (subst (e', x) e, t)
 
-  | Let (ds, e2) -> raise NotImplemented
+  | Let (ds, e2) -> 
+      begin match ds with 
+        | [] -> Let([], subst (e', x) e2)
+        | h::t -> 
+            begin match h with 
+              | Val (e1, y) ->
+                  let e1' = subst (e', x) e1 in
+                  if x = y || member y (free_vars e') then 
+                    begin
+                      let y' = fresh_var y in
+                      let e2' = subst (Var y', y) e2 in (* TODO: substitute in other vars of the Let *)
+                      subst (e', x) (Let(Val(e1', y')::t, e2'))
+                    end
+                  else 
+                    begin
+                      let Let(vl, e2') = subst (e', x) (Let(t, e2)) in
+                      Let(Val(e1', y)::vl, e2')
+                    end
+              | ByName (e1, y) -> 
+                  let e1' = subst (e', x) e1 in
+                  if x = y or member y (free_vars e') then 
+                    begin
+                      let y' = fresh_var y in
+                      let e2' = subst (Var y', y) e2 in (* TODO: substitute in other vars of the Let *)
+                      subst (e', x) (Let(ByName(e1', y')::t, e2'))
+                    end
+                  else 
+                    begin
+                      let Let(vl, e2') = subst (e', x) (Let(t, e2)) in
+                      Let(ByName(e1', y)::vl, e2')
+                    end
+              | Valtuple (e1, ns) -> raise NotImplemented 
+            end 
+      end 
   | Apply (e1, e2) -> raise NotImplemented
   | Fn (y, t, e) -> raise NotImplemented
   | Rec (y, t, e) -> raise NotImplemented
