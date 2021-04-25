@@ -455,7 +455,7 @@ let rec subst ((e', x) : exp * name) (e : exp) : exp =
       Fn (y, t, subst (e', x) e)
     else 
       let y' = fresh_var y in
-      let new_e = replace y y' e in
+      let new_e = subst (Var y', y) e in
       Fn (y', t,  subst (e', x) new_e)
   | Rec (y, t, e) -> 
     if x = y then Rec (y, t, e)
@@ -463,13 +463,13 @@ let rec subst ((e', x) : exp * name) (e : exp) : exp =
       Rec (y, t, subst (e', x) e)
     else 
       let y' = fresh_var y in
-      let new_e = replace y y' e in
+      let new_e = subst (Var y', y) e in
       Rec (y', t,  subst (e', x) new_e)
 
 and help (e', x) vars e2 =
   let rec help_rec vars new_vars e2 =
     match vars with 
-    | [] -> (List.rev new_vars, e2) "TODO: decide to reverse back to og order or not"
+    | [] -> (List.rev new_vars, e2) (* TODO: decide to reverse back to og order or not *)
     | h::t -> 
         match h with 
         | Val (e1, y) -> 
@@ -480,7 +480,7 @@ and help (e', x) vars e2 =
               help_rec t (Val(e1', y)::new_vars) (subst (e', x) e2)
             else 
               let y' = fresh_var y in
-              let e2' = replace y y' e2 in
+              let e2' = subst (Var y', y) e2 in
               help_rec t (Val(e1', y')::new_vars) (subst (e', x) e2')
         | ByName (e1, y) -> 
             let e1' = subst (e', x) e1 in
@@ -490,7 +490,7 @@ and help (e', x) vars e2 =
               help_rec t (ByName(e1', y)::new_vars) (subst (e', x) e2)
             else 
               let y' = fresh_var y in
-              let e2' = replace y y' e2 in
+              let e2' = subst (Var y', y) e2 in
               help_rec t (ByName(e1', y')::new_vars) (subst (e', x) e2')
         | Valtuple (e1, ns) -> 
           let e1' = subst (e', x) e1 in
@@ -506,7 +506,7 @@ and help (e', x) vars e2 =
                   rename t (y::ns') e2'
                 else 
                   let y' = fresh_var y in
-                  let e2' = replace y y' e2' in
+                  let e2' = subst (Var y', y) e2' in
                   rename t (y'::ns') e2'
             in
             rename ns [] e2
@@ -515,30 +515,6 @@ and help (e', x) vars e2 =
   | [] -> ([], subst (e', x) e2)
   | _ -> help_rec vars [] e2
 
-and replace x y e = 
-  let rec replace_dec dl new_dl =
-    match dl with
-    | [] -> new_dl
-    | h::t -> 
-        match h with
-        | Val (e1, v) -> 
-            replace_dec t (Val(replace x y e1, if v = x then y else v)::new_dl)
-        | ByName (e1, v) -> 
-            replace_dec t (ByName(replace x y e1, if v = x then y else v)::new_dl)
-        | Valtuple (e1, vs) -> 
-            replace_dec t (Valtuple(replace x y e1, List.map (fun v -> if v = x then y else v) vs)::new_dl)
-  in
-  match e with
-  | If (e1, e2, e3) -> If (replace x y e1, replace x y e2, replace x y e3)
-  | Primop (po, l) -> Primop (po, List.map (replace x y) l)
-  | Tuple l -> Tuple (List.map (replace x y) l)
-  | Fn (v, t, e) -> Fn ((if v = x then y else v), t, replace x y e)
-  | Rec (v, t, e) -> Rec ((if v = x then y else v), t, replace x y e)
-  | Apply (e1, e2) -> Apply (replace x y e1, replace x y e2)
-  | Var v -> if v = x then Var y else Var v
-  | Anno (e, t) -> Anno (replace x y e, t)
-  | Let (dl, e) -> Let (replace_dec dl [], replace x y e)
-  | _ -> e
 
 let eval_tests : (exp * exp) list = [
   (parse_exp "true && true && true;", parse_exp "true;");
@@ -593,8 +569,7 @@ let rec eval : exp -> exp =
       | Apply (e1, e2) -> 
         begin match eval e1 with
           | Fn (x, t, e) -> 
-            let v = eval e2 in
-            eval (subst (v, x) e)
+            let v = eval e2 in eval (subst (v, x) e)
           | _ -> stuck "A function must be passed as the first argument to apply" 
         end
       | Rec (f, t, e) -> eval (subst (Rec (f, t, e), f) e)
@@ -653,13 +628,100 @@ let rec eval : exp -> exp =
 
 
 let infer_tests : ((context * exp) * typ) list = [
+    ((Ctx([]), parse_exp "2 + 3;"), TInt);
+  ((Ctx([]), parse_exp "2 < 3;"), TBool);
+  ((Ctx([]), parse_exp "69 + 3 < 44;"), TBool);
+  (*((Ctx([]), parse_exp "if 69 + 3 < 44 then 32 else true;"), (*We are expecting an error here*) TInt);*)
+  ((Ctx([]), parse_exp "if 69 + 3 < 44 then 32 else 69;"), TInt);
+  ((Ctx([]), parse_exp "(fn x : bool => x) true;"), TBool);
+  ((Ctx([]), parse_exp "(fn x : int => x + 2) 3;"), TInt);
+  (*((Ctx([]), parse_exp "(fn x : bool => x + 2) true;"), (*We are expecting an error here*) TInt);*)
+  ((Ctx([]), parse_exp "(fn x : bool => if x then 54 else 69) true;"), TInt); 
+  ((Ctx([]), parse_exp valid_program_2), TInt);
+  ((Ctx([]), parse_exp valid_program_3), TInt);
+  ((Ctx([]), parse_exp valid_program_4), TInt);
+  ((Ctx([]), parse_exp valid_program_5), TInt);
+  ((Ctx([]), parse_exp valid_program_6), TInt);
+  ((Ctx([]), parse_exp valid_program_7), TInt);
+  ((Ctx([]), parse_exp valid_program_8), TInt);
+  ((Ctx([]), parse_exp valid_program_9), TInt);
+  ((Ctx([]), parse_exp "let val (x,y) = (3 + 2, true) in if y then x else x + 2 end;"), TInt);
+  ((Ctx([]), parse_exp "let val x = 4 name x = true val y = x in y end;"), TBool);
+  ((Ctx([]), parse_exp "let val x = 4 name x = true val y = x in x || false end;"), TBool);
+  ((Ctx([]), parse_exp "(fn x : int => if x = 0 then true else false);"), TArrow(TInt, TBool));
 ]
 
 (* Q5  : Type an expression *)
 (* Q7* : Implement the argument type inference
          For this question, move this function below the "unify". *)
-let infer (ctx : context) (e : exp) : typ = raise NotImplemented
-
+let rec infer (ctx : context) (e : exp) : typ = (* TODO: check if adding a rec is okay *)
+  let rec infer_decs ds ctx =
+    match ds with
+    | [] -> ctx
+    | d::ds' ->
+      match d with 
+      | Val (e, x) | ByName (e, x) -> (* TODO: clean up *)
+        let t = infer ctx e in
+        infer_decs ds' (extend ctx (x, t))
+      | Valtuple (e, xs) -> (* TODO: clean up *)
+        match infer ctx e with 
+        | TProduct ts ->
+          let xt_pairs = List.combine xs ts in 
+          infer_decs ds' (extend_list ctx xt_pairs)
+        | _ -> type_fail "Expected type TProduct"        
+  in
+  match e with
+  | Int _ -> TInt
+  | Bool _ -> TBool
+  | Var x -> ctx_lookup ctx x
+  | If (e, e1, e2) ->
+    begin match infer ctx e with
+      | TBool -> 
+        let t1 = infer ctx e1 
+        and t2 = infer ctx e2 in
+        if typ_eq t1 t2 then
+          t1
+        else type_fail "The consequent and alternative of the If statment have diffrent types"
+      | _ -> type_fail "Expected TBool"
+    end 
+  | Primop (op, es) -> (* TODO: do correctly *)
+    let (t1, t2) = 
+      match es with 
+      | e1::e2::t -> (infer ctx e1, infer ctx e2)
+      | [e] -> let t = infer ctx e in (t, t)
+      | [] -> type_fail "Primitive operation has no expressions" 
+    in
+    begin match op with
+    | Equals | NotEquals | LessThan | LessEqual | GreaterThan | GreaterEqual -> 
+      if (typ_eq t1 TInt) && (typ_eq t2 TInt) then TBool
+      else type_fail "Expressions in comparision operations must be of type TInt"
+    | Plus | Minus | Times | Div ->
+      if (typ_eq t1 TInt) && (typ_eq t2 TInt) then TInt
+      else type_fail "Expressions in math operations must be of type TInt"
+    | And | Or -> 
+      if (typ_eq t1 TBool) && (typ_eq t2 TBool) then TBool
+      else type_fail "Expressions in boolean operations must be of type TInt"
+    | Negate -> 
+      if (typ_eq t1 TInt) then TInt
+      else type_fail "Expression in the negate operation must be of type TInt"  
+    end  
+  | Tuple es -> TProduct (List.map (infer ctx) es)
+  | Fn (x, t, e) -> 
+    begin match t with 
+      | Some t -> TArrow (t, infer (extend ctx (x, t)) e)
+      | None -> type_fail "Function is not typed"
+    end
+  | Rec (f, t, e) -> infer (extend ctx (f, t)) e
+  | Apply (f, e) -> 
+    begin match infer ctx f with 
+      | TArrow (t, t') -> 
+        if typ_eq t (infer ctx e) then t'
+        else type_fail "Function and expression have different types in Apply"
+      | _ -> type_fail "Invalid type for function" (* Should never get here *)
+    end
+  | Anno (e, t) -> infer ctx e
+  | Let (ds, e) -> infer (infer_decs ds ctx) e
+  
 
 let unify_tests : ((typ * typ) * unit) list = [
 ]
