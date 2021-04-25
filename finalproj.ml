@@ -628,7 +628,7 @@ let rec eval : exp -> exp =
 
 
 let infer_tests : ((context * exp) * typ) list = [
-    ((Ctx([]), parse_exp "2 + 3;"), TInt);
+  ((Ctx([]), parse_exp "2 + 3;"), TInt);
   ((Ctx([]), parse_exp "2 < 3;"), TBool);
   ((Ctx([]), parse_exp "69 + 3 < 44;"), TBool);
   (*((Ctx([]), parse_exp "if 69 + 3 < 44 then 32 else true;"), (*We are expecting an error here*) TInt);*)
@@ -655,21 +655,6 @@ let infer_tests : ((context * exp) * typ) list = [
 (* Q7* : Implement the argument type inference
          For this question, move this function below the "unify". *)
 let rec infer (ctx : context) (e : exp) : typ = (* TODO: check if adding a rec is okay *)
-  let rec infer_decs ds ctx =
-    match ds with
-    | [] -> ctx
-    | d::ds' ->
-      match d with 
-      | Val (e, x) | ByName (e, x) -> (* TODO: clean up *)
-        let t = infer ctx e in
-        infer_decs ds' (extend ctx (x, t))
-      | Valtuple (e, xs) -> (* TODO: clean up *)
-        match infer ctx e with 
-        | TProduct ts ->
-          let xt_pairs = List.combine xs ts in 
-          infer_decs ds' (extend_list ctx xt_pairs)
-        | _ -> type_fail "Expected type TProduct"        
-  in
   match e with
   | Int _ -> TInt
   | Bool _ -> TBool
@@ -720,16 +705,69 @@ let rec infer (ctx : context) (e : exp) : typ = (* TODO: check if adding a rec i
       | _ -> type_fail "Invalid type for function" (* Should never get here *)
     end
   | Anno (e, t) -> infer ctx e
-  | Let (ds, e) -> infer (infer_decs ds ctx) e
+  | Let (ds, e) -> 
+    let rec infer_decs ds ctx =
+    match ds with
+    | [] -> ctx
+    | d::ds' ->
+      match d with 
+      | Val (e, x) | ByName (e, x) -> (* TODO: clean up *)
+        let t = infer ctx e in
+        infer_decs ds' (extend ctx (x, t))
+      | Valtuple (e, xs) -> (* TODO: clean up *)
+        match infer ctx e with 
+        | TProduct ts ->
+          let xt_pairs = List.combine xs ts in 
+          infer_decs ds' (extend_list ctx xt_pairs)
+        | _ -> type_fail "Expected type TProduct"        
+    in
+    infer (infer_decs ds ctx) e
   
 
 let unify_tests : ((typ * typ) * unit) list = [
+  (* Not Unifiable *)
+  ((TBool, TVar(ref (Some TInt))), ()); 
+  ((TInt, TArrow(TBool, TInt)), ());
+  (* Unifiable *)
+  ((TInt, TInt), ());
+  ((TBool, TBool), ());
+  ((fresh_tvar (), TArrow(TBool, TInt)), ());
 ]
 
 (* find the next function for Q5 *)
 (* Q6  : Unify two types *)
-let unify (ty1 : typ) (ty2 : typ) : unit = raise NotImplemented
-
+(* Q6  : Unify two types *)
+let rec unify (ty1 : typ) (ty2 : typ) : unit =
+  let rec check_occ a t = 
+    match t with
+    | TInt | TBool -> false
+    | TArrow (t1, t2) -> (check_occ a t1) || ((check_occ a t2))
+    | TProduct ts -> List.exists (check_occ a) ts
+    | TVar b -> (a == b)
+  in
+  let unify_tvar x ty = 
+    if check_occ x ty then 
+      type_fail "Type variable occurs in the given type"
+    else 
+      match !x with 
+      | Some x_ty -> unify x_ty ty
+      | None -> x := Some ty 
+  in
+  match ty1, ty2 with
+  | TInt, TInt -> ()
+  | TBool, TBool -> ()
+  | TArrow (t1, t2), TArrow (t1', t2') -> unify t1 t1'; unify t2 t2'
+  | TProduct ts, TProduct ts' ->  List.iter2 unify ts ts'
+  | TVar x, TVar x' -> 
+      begin match !x, !x' with 
+        | Some t, Some t' -> unify t t'
+        | None, Some t -> x := Some t
+        | Some t, None -> x' := Some t
+        | None, None -> ()
+      end
+  | TVar x, _ -> unify_tvar x ty2
+  | _, TVar x -> unify_tvar x ty1
+  | _, _ -> type_fail "Types are not unifiable"
 
 (* Now you can play with the language that you've implemented! *)
 let execute (s: string) : unit =
