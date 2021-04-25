@@ -511,7 +511,9 @@ and help (e', x) vars e2 =
             in
             rename ns [] e2
   in
-  help_rec vars [] e2
+  match vars with
+  | [] -> ([], subst (e', x) e2)
+  | _ -> help_rec vars [] e2
 
 and replace x y e = 
   let rec replace_dec dl new_dl =
@@ -538,23 +540,26 @@ and replace x y e =
   | Let (dl, e) -> Let (replace_dec dl [], replace x y e)
   | _ -> e
 
-(*       
-let rec contains_fv l fv = 
-            match l with 
-            | [] -> false
-            | h::t -> 
-              if member h fv then true
-              else contains_fv t fv
-          and find_all l l' =
-            match l with
-            | [] -> []
-            | h::t -> 
-              if member h l' then h :: (find_all t l')
-              else find_all t l'
-          in
-          let fv_clones = find_all ns (free_vars e') in *)
-
 let eval_tests : (exp * exp) list = [
+  (parse_exp "true && true && true;", parse_exp "true;");
+  (parse_exp "true && false;", parse_exp "false;");
+  (parse_exp "false && true;", parse_exp "false;");
+  (parse_exp "false || false || true;", parse_exp "true;"); 
+  (parse_exp "false || false;", parse_exp "false;");
+  (parse_exp "true || false;", parse_exp "true;"); 
+  (parse_exp "fn x => 3;", parse_exp "fn x => 3;");
+  (parse_exp "(fn x => if x then 69 else 4) true;", parse_exp "69;"); 
+  (parse_exp "let val (x,y) = (3,2) in x + y end;", parse_exp "5;");
+  (parse_exp valid_program_1, parse_exp "300;"); 
+  (parse_exp valid_program_2, parse_exp "133;");
+  (parse_exp valid_program_3, parse_exp "120;");
+  (parse_exp valid_program_4, parse_exp "3;");
+  (parse_exp valid_program_5, parse_exp "6;");
+  (parse_exp valid_program_6, parse_exp "6;");
+  (parse_exp valid_program_7, parse_exp "4;");
+  (parse_exp valid_program_8, parse_exp "900;");
+  (parse_exp valid_program_9, parse_exp "1600;");
+  (parse_exp valid_program_10, parse_exp "10;");
 ]
 
 (* Q4  : Evaluate an expression in big-step *)
@@ -584,14 +589,36 @@ let rec eval : exp -> exp =
       | Anno (e, _) -> eval e     (* types are ignored in evaluation *)
       | Var x -> stuck ("Free variable \"" ^ x ^ "\" during evaluation")
 
-      | Fn (x, t, e) -> raise NotImplemented
-      | Apply (e1, e2) -> raise NotImplemented
-      | Rec (f, t, e) -> raise NotImplemented
+      | Fn (x, t, e) -> Fn (x, t, e)
+      | Apply (e1, e2) -> 
+        begin match eval e1 with
+          | Fn (x, t, e) -> 
+            let v = eval e2 in
+            eval (subst (v, x) e)
+          | _ -> stuck "A function must be passed as the first argument to apply" 
+        end
+      | Rec (f, t, e) -> eval (subst (Rec (f, t, e), f) e)
 
       | Primop (And, es) ->
-          raise NotImplemented
+        begin match es with 
+          | [e1; e2] -> 
+            begin match eval e1 with 
+              | Bool (true) -> eval e2
+              | Bool (false) -> Bool (false)
+              | _ -> stuck "Arguments to 'and' operation must be of type bool"
+            end
+          | _ -> "Bad arguments to 'and' operation"
+        end    
       | Primop (Or, es) ->
-          raise NotImplemented
+        begin match es with 
+          | [e1; e2] -> 
+            begin match eval e1 with 
+              | Bool (true) -> Bool (true) 
+              | Bool (false) -> eval e2
+              | _ -> stuck "Arguments to 'or' operation must be of type bool"
+            end
+          | _ -> "Bad arguments to 'or' operation"
+        end  
       | Primop (op, es) ->
           let vs = List.map eval es in
           begin match eval_op op vs with
@@ -599,7 +626,20 @@ let rec eval : exp -> exp =
             | Some v -> v
           end
 
-      | Let (ds, e) -> raise NotImplemented
+      | Let (ds, e) -> 
+        match ds with
+          | [] -> eval e
+          | h::t -> 
+            let exp = Let(t, e) in
+            match h with
+            | Val (e', x) -> eval (subst (eval e', x) exp)
+            | ByName (e', x) -> eval (subst (e', x) exp)
+            | Valtuple (e', xs) -> 
+              match eval e' with
+              | Tuple vs -> 
+                let val_name_pair = List.combine vs xs in
+                eval (List.fold_right subst val_name_pair exp)
+              | _ -> stuck "Valtuple expression should be of type tuple"
     in
   (* do not change the code from here *)
     decr bigstep_depth;
