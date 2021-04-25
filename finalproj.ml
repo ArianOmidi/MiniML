@@ -374,6 +374,16 @@ and decs_exps l =
   List.map get_exp l 
 
 let unused_vars_tests : (exp * name list) list = [
+  (parse_exp valid_program_1, []);
+  (parse_exp valid_program_2, []);
+  (parse_exp valid_program_3, []);
+  (parse_exp valid_program_4, []);
+  (parse_exp valid_program_5, []);
+  (parse_exp valid_program_6, ["x"]);
+  (parse_exp valid_program_7, []);
+  (parse_exp valid_program_8, []);
+  (parse_exp valid_program_9, []);
+  (parse_exp valid_program_10, ["y"]);
   (parse_exp "let val x = 3 in 4 end;", ["x"]);
   (parse_exp "let val x = true in let val y = 4 in x + 5 end end;", ["y"]);
   (parse_exp "let val x = 3 in let val x = 4 in x + x end end;", ["x"]);
@@ -383,9 +393,9 @@ let unused_vars_tests : (exp * name list) list = [
   (parse_exp "let val x = true in let val y = 4 in x + 5 end end;", ["y"]);
   (parse_exp "let val x = 3 in (let val x = 4 in x + x end) end;", ["x"]); (* first occurence of x is unused *)
   (parse_exp "let val x = 2 name y = 3 in x + 2 end;", ["y"]); 
-  (parse_exp "let val x = 1 val x = 1 in x + 1 end;", ["x"]);
-  (parse_exp "let val x = 5 val (x,y) = (3,4) in x end;", ["x";"y"]);
-  (parse_exp "let name x = true name x = 1 in x end;", ["x"]);
+  (parse_exp "let val x = 1 val x = 1 in x + 1 end;", []);
+  (parse_exp "let val x = 5 val (x,y) = (3,4) in x end;", ["y"]);
+  (parse_exp "let name x = true name x = 1 in x end;", []);
   (parse_exp "(fn y => 2) true;", ["y"]);
   (parse_exp "let fun fact (x : int) : int = if x = 0 then 1 else x * fact(x - 1) in fact 5 end;", []);
   (parse_exp "let fun test ( x : int ) : int = 3 in 4 end;", ["test"; "x"]); 
@@ -405,20 +415,11 @@ let rec unused_vars (e : exp) : name list =
   | Fn (x, _, e) -> union (delete (free_vars e) [x]) (unused_vars e)
   | Rec (_, _, e) -> unused_vars e (* TODO: findout why Fn func doesnt work *)
   | Let (l, e) -> 
-    let bv = find_bounded_vars l
-    and fv = free_vars e 
-    and el = decs_exps l in
-    union (union (remove fv bv) (unused_vars e)) (union_list (List.map unused_vars el))
+      let bv = find_bounded_vars l
+      and fv = free_vars e 
+      and el = decs_exps l in
+      union (union (delete fv bv) (unused_vars e)) (union_list (List.map unused_vars el))
   | _ -> []
-
-and remove rs set =
-  match set with
-  | [] -> []
-  | h::t ->
-    if member h rs then
-       t
-    else
-      h :: remove rs t
 
 
 let subst_tests : (((exp * name) * exp) * exp) list = [
