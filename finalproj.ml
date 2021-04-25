@@ -218,7 +218,7 @@ end;
 
 (* ============================================================ *)
 
-(* TODO: document *)
+(* Helper method to parse the expression from a string *)
 let parse_exp s = 
   match P.parse s with
   | Right e -> e
@@ -317,18 +317,29 @@ let parse_tests : (string * (string, exp) either) list = [
   );
 ]
 
-(* TODO: change and add tests *)
 let free_vars_tests : (exp * name list) list = [ 
-  (Int 10, []);
-  (parse_exp "true;", []);
-  (parse_exp "if x then (let val y = x * x in y + 1 end) else x + y;", ["x"; "y"]);
-  (parse_exp "x + 3;", ["x"]);
-  (parse_exp "(4, true, y);", ["y"]);
-  (parse_exp "fn x => y + x;", ["y"]);
-  (parse_exp "fn x => fn y => x y;", []); 
-  (parse_exp "let val x = 5 + y val (x,y) = (3,4) in x end;", ["y"]); 
-  (parse_exp "let val x = true name y = z + 1 in x end;", ["z"]); 
-  (parse_exp "let val f = let val ten = 10 in (fn y => ten) end in g 44 end;", ["g"])
+  (parse_exp valid_program_1, []);
+  (parse_exp valid_program_2, []);
+  (parse_exp valid_program_3, []);
+  (parse_exp valid_program_4, []);
+  (parse_exp valid_program_5, []);
+  (parse_exp valid_program_6, []);
+  (parse_exp valid_program_7, []);
+  (parse_exp valid_program_8, []);
+  (parse_exp valid_program_9, []);
+  (parse_exp valid_program_10, []);
+  (parse_exp "100;", []);
+  (parse_exp "true;", []); 
+  (parse_exp "x + y * ~2;", ["x"; "y"]);
+  (parse_exp "if x then 10 else y;", ["x"; "y"]);
+  (parse_exp "x + 10 * 20 / y;", ["x"; "y"]);
+  (parse_exp "let val (x, y) = (10, x) in ~x + y * z end;", ["x"; "z"]);
+  (parse_exp "let name z = true in x || z && y end;", ["x"; "y"]);
+  (parse_exp "fn x => x * y;", ["y"]);
+  (parse_exp "let val f = fn x => fn y => x y in f x 10 end;", ["x"]); 
+  (parse_exp "let fun g f : int = let name f1 = fn x => f x + y in f 70 end in g f end;", ["y"; "f"]);
+  (parse_exp "let fun test (x : int): int = 50 in test 1 end;", []);
+  (parse_exp "(if true then 3 else 5) : int;", []) 
 ]
 
 (* Q1  : Find the free variables in an expression *)
