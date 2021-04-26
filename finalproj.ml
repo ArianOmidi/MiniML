@@ -426,7 +426,6 @@ let subst_tests : (((exp * name) * exp) * exp) list = [
   (((Int 5, "x"), If(Bool(true), Var "x", Var "y")), If (Bool true, Int 5, Var "y"));
   (((Int 5, "y"), parse_exp "fn y => x + y;"), parse_exp "fn y => x + y;");
   (((Int 5, "x"), parse_exp "fn y => x + y;"), parse_exp "fn y => 5 + y;");
-  (*(((parse_exp "y + 1;", "x"), parse_exp "fn y => x + y;"), parse_exp "fn Y => y + 1 + Y;");*)
   (((Int 5, "x"), parse_exp "(fn x => x + 1) x;"), parse_exp "(fn x => x + 1) 5;");
   (((Int 5, "x"), parse_exp "(fn y => y + 1) x;"), parse_exp "(fn y => y + 1) 5;");
   (((Int 6, "y"), parse_exp "let fun fact (x : int) : int = if x = 0 then 1 else x * fact(x - 1) * y in fact 5 end;"), parse_exp "let fun fact (x : int) : int = if x = 0 then 1 else x * fact(x - 1) * 6 in fact 5 end;");
@@ -436,10 +435,12 @@ let subst_tests : (((exp * name) * exp) * exp) list = [
   (((Int 69, "x"), parse_exp "let name y = x + 3 in x end;"), parse_exp "let name y = 69 + 3 in 69 end;");
   (((Int 69, "y"), parse_exp "let val x = 5 + y val (x,y) = (3,4) in x end;"), parse_exp "let val x = 5 + 69 val (x,y) = (3,4) in x end;");
   (((parse_exp "x + 1;", "y"), parse_exp "let val (x,y) = (3,y) in x + y end;"), parse_exp "let val (x,y) = (3,x + 1) in x + y end;");
-  (*(((parse_exp "x + 1;", "y"), parse_exp "let name x = y val (x,y) = (3,y) in x + y end;"), parse_exp "let name X = x + 1 val (x,y) = (3,x + 1) in x + y end;");*)
-  (*(((parse_exp "2 * w;", "x"), parse_exp "let val w = 3 name y = 2 * x in fn x => w * y * x end;"), parse_exp "let val W = 3 name y = 2 * 2 * w in fn x => W * y * x end;");*)
-  (*(((parse_exp "y + 3;", "x"), parse_exp "let name w = x in fn y => x + 2 end;"), parse_exp "let name w = y + 3 in fn Y => y + 3 + 2 end;");*)
-  (*(((parse_exp "y * 2;", "w"), parse_exp "let val x = 3 val y = w * 3 in fn x => w * y * x end;"), parse_exp "let val x = 3 val Y = y * 2 * 3 in fn x => y * 2 * Y * x end;")*)
+  (* Var rename tests *)
+  (((parse_exp "y + 1;", "x"), parse_exp "fn y => x + y;"), parse_exp "fn Y => y + 1 + Y;");
+  (((parse_exp "x + 1;", "y"), parse_exp "let name x = y val (x,y) = (3,y) in x + y end;"), parse_exp "let name X = x + 1 val (x,y) = (3,x + 1) in x + y end;");
+  (((parse_exp "2 * w;", "x"), parse_exp "let val w = 3 name y = 2 * x in fn x => w * y * x end;"), parse_exp "let val W = 3 name y = 2 * 2 * w in fn x => W * y * x end;");
+  (((parse_exp "y + 3;", "x"), parse_exp "let name w = x in fn y => x + 2 end;"), parse_exp "let name w = y + 3 in fn Y => y + 3 + 2 end;");
+  (((parse_exp "y * 2;", "w"), parse_exp "let val x = 3 val y = w * 3 in fn x => w * y * x end;"), parse_exp "let val x = 3 val Y = y * 2 * 3 in fn x => y * 2 * Y * x end;")
 ]
 
 (* Q3  : Substitute a variable *)
@@ -457,9 +458,7 @@ let rec subst ((e', x) : exp * name) (e : exp) : exp =
   | Tuple es -> Tuple (List.map (subst (e', x)) es)
   | Anno (e, t) -> Anno (subst (e', x) e, t)
 
-  | Let (ds, e2) -> 
-      let (ds', e2') = help (e', x) ds e2 in
-      Let (ds', e2')
+  | Let (ds, e2) -> let (ds', e2') = help (e', x) ds e2 in Let (ds', e2')
   | Apply (e1, e2) -> Apply (subst (e', x) e1, subst (e', x) e2)
   | Fn (y, t, e) -> 
     if x = y then Fn (y, t, e)
@@ -479,54 +478,46 @@ let rec subst ((e', x) : exp * name) (e : exp) : exp =
       Rec (y', t,  subst (e', x) new_e)
 
 and help (e', x) vars e2 =
-  let rec help_rec vars new_vars e2 =
+  let rec help_rec vars new_vars e2 overshadowed =
+    let subst_dec decs e1 y f = 
+      let e1' = subst (e', x) e1 in
+      if x = y then 
+        help_rec decs ((f (e1', y))::new_vars) e2 true
+      else if not (member y (free_vars e')) || overshadowed then 
+        help_rec decs ((f (e1', y))::new_vars) e2 overshadowed
+      else 
+        let y' = fresh_var y in
+        let e2' = subst (Var y', y) e2 in
+        help_rec decs ((f (e1', y'))::new_vars) e2' overshadowed
+    in 
     match vars with 
-    | [] -> (List.rev new_vars, e2) (* TODO: decide to reverse back to og order or not *)
+    | [] -> 
+        let e2' = if overshadowed then e2 else subst (e', x) e2 in
+        (new_vars, e2') (* TODO: decide to reverse back to og order or not *)
     | h::t -> 
         match h with 
-        | Val (e1, y) -> 
-            let e1' = subst (e', x) e1 in
-            if x = y then 
-              help_rec t (Val(e1', y)::new_vars) e2
-            else if not (member y (free_vars e')) then 
-              help_rec t (Val(e1', y)::new_vars) (subst (e', x) e2)
-            else 
-              let y' = fresh_var y in
-              let e2' = subst (Var y', y) e2 in
-              help_rec t (Val(e1', y')::new_vars) (subst (e', x) e2')
-        | ByName (e1, y) -> 
-            let e1' = subst (e', x) e1 in
-            if x = y then 
-              help_rec t (ByName(e1', y)::new_vars) e2
-            else if not (member y (free_vars e')) then 
-              help_rec t (ByName(e1', y)::new_vars) (subst (e', x) e2)
-            else 
-              let y' = fresh_var y in
-              let e2' = subst (Var y', y) e2 in
-              help_rec t (ByName(e1', y')::new_vars) (subst (e', x) e2')
+        | Val (e1, y) -> subst_dec t e1 y (fun (e, ds) -> Val (e, ds)) 
+        | ByName (e1, y) -> subst_dec t e1 y (fun (e, ds) -> ByName (e, ds)) 
         | Valtuple (e1, ns) -> 
-          let e1' = subst (e', x) e1 in
-          if member x ns then 
-            help_rec t (Valtuple(e1', ns)::new_vars) e2
-          else 
-            let fv = free_vars e' in
-            let rec rename l ns' e2' = 
-              match l with 
-              | [] -> help_rec t (Valtuple(e1', List.rev ns')::new_vars) (subst (e', x) e2')
-              | y::t -> 
-                if not (member y fv) then 
-                  rename t (y::ns') e2'
-                else 
-                  let y' = fresh_var y in
-                  let e2' = subst (Var y', y) e2' in
-                  rename t (y'::ns') e2'
-            in
-            rename ns [] e2
+            let e1' = subst (e', x) e1 in
+            if member x ns then 
+              help_rec t (Valtuple(e1', ns)::new_vars) e2 true
+            else 
+              let fv = free_vars e' in
+              let rec rename l ns' e2' = 
+                match l with 
+                | [] -> help_rec t (Valtuple(e1', List.rev ns')::new_vars) e2' overshadowed
+                | y::t -> 
+                    if not (member y fv) then 
+                      rename t (y::ns') e2'
+                    else 
+                      let y' = fresh_var y in
+                      let e2' = subst (Var y', y) e2' in
+                      rename t (y'::ns') e2'
+              in
+              rename ns [] e2 
   in
-  match vars with
-  | [] -> ([], subst (e', x) e2)
-  | _ -> help_rec vars [] e2
-
+  help_rec (List.rev vars) [] e2 false
 
 let eval_tests : (exp * exp) list = [
   (parse_exp "true && true && true;", parse_exp "true;");
@@ -538,6 +529,10 @@ let eval_tests : (exp * exp) list = [
   (parse_exp "fn x => 3;", parse_exp "fn x => 3;");
   (parse_exp "(fn x => if x then 69 else 4) true;", parse_exp "69;"); 
   (parse_exp "let val (x,y) = (3,2) in x + y end;", parse_exp "5;");
+  (parse_exp "let name x = 10 in let name x = x + 1 val (x, y) = (3, x + 1) in x + y end end;", 
+   parse_exp "14;"); 
+  (parse_exp "let val x = 10 in let name x = x + 1 val (x, y) = (3, x + 1) in x + y end end;", 
+   parse_exp "14;"); 
   (parse_exp valid_program_1, parse_exp "300;"); 
   (parse_exp valid_program_2, parse_exp "133;");
   (parse_exp valid_program_3, parse_exp "120;");
