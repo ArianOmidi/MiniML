@@ -454,13 +454,67 @@ let subst_tests : (((exp * name) * exp) * exp) list = [
 ]
 
 (* Q3  : Substitute a variable *)
-let rec subst ((e', x) : exp * name) (e : exp) : exp =
+let rec subst ((e', x) : exp * name) (e : exp) : exp = 
+  let subst_let ds e2 = 
+    let get_let_parts e = 
+      match e with 
+      | Let (ds, e) -> (ds, e)
+      | _ -> stuck "Expected Let expression" (* Will never get here *)
+    in
+    let subst_dec ds' e1 y f = 
+      let e1' = subst (e', x) e1 in
+      if x = y then 
+        Let ((f (e1', y))::ds', e2)
+      else if not (member y (free_vars e')) then 
+        let (ds, e) = get_let_parts (subst (e', x) (Let(ds', e2)))in 
+        Let ((f (e1', y))::ds, e)
+      else 
+        let y' = fresh_var y in
+        let exp = subst (Var y', y) (Let(ds', e2)) in
+        let (ds, e) = get_let_parts (subst (e', x) exp) in 
+        Let ((f (e1', y'))::ds, e)
+    in 
+    match ds with 
+    | [] -> Let ([], subst (e', x) e2)
+    | d::ds' -> 
+      match d with 
+      | Val (e1, y) -> subst_dec ds' e1 y (fun (e, n) -> Val (e, n)) 
+      | ByName (e1, y) -> subst_dec ds' e1 y (fun (e, n) -> ByName (e, n)) 
+      | Valtuple (e1, ns) -> 
+        let e1' = subst (e', x) e1 in
+        if member x ns then 
+          Let ((Valtuple (e1', ns))::ds', e2)
+        else 
+          let fv = free_vars e' in
+          let rec rename ns ns' exp = 
+            match ns with 
+            | [] -> 
+              let (ds, e) = get_let_parts (subst (e', x) exp) in
+              Let ((Valtuple (e1', List.rev ns'))::ds, e)
+            | y::t -> 
+              if not (member y fv) then 
+                rename t (y::ns') exp
+              else 
+                let y' = fresh_var y in
+                let exp' = subst (Var y', y) exp in
+                rename t (y'::ns') exp'
+          in
+          rename ns [] (Let(ds', e2))
+  and subst_fun y t e f = 
+    if x = y then f (y, t, e)
+    else if not (member y (free_vars e')) then 
+      f (y, t, subst (e', x) e)
+    else 
+      let y' = fresh_var y in
+      let new_e = subst (Var y', y) e in
+      f (y', t,  subst (e', x) new_e)
+  in
   match e with
   | Var y ->
-      if x = y then
-        e'
-      else
-        Var y
+    if x = y then
+      e'
+    else
+      Var y
 
   | Int _ | Bool _ -> e
   | Primop (po, es) -> Primop (po, List.map (subst (e', x)) es)
@@ -468,66 +522,11 @@ let rec subst ((e', x) : exp * name) (e : exp) : exp =
   | Tuple es -> Tuple (List.map (subst (e', x)) es)
   | Anno (e, t) -> Anno (subst (e', x) e, t)
 
-  | Let (ds, e2) -> let (ds', e2') = help (e', x) ds e2 in Let (ds', e2')
+  | Let (ds, e2) -> subst_let ds e2
   | Apply (e1, e2) -> Apply (subst (e', x) e1, subst (e', x) e2)
-  | Fn (y, t, e) -> 
-    if x = y then Fn (y, t, e)
-    else if not (member y (free_vars e')) then 
-      Fn (y, t, subst (e', x) e)
-    else 
-      let y' = fresh_var y in
-      let new_e = subst (Var y', y) e in
-      Fn (y', t,  subst (e', x) new_e)
-  | Rec (y, t, e) -> 
-    if x = y then Rec (y, t, e)
-    else if not (member y (free_vars e')) then 
-      Rec (y, t, subst (e', x) e)
-    else 
-      let y' = fresh_var y in
-      let new_e = subst (Var y', y) e in
-      Rec (y', t,  subst (e', x) new_e)
+  | Fn (y, t, e) -> subst_fun y t e (fun (y, t, e) -> Fn (y, t, e)) 
+  | Rec (y, t, e) -> subst_fun y t e (fun (y, t, e) -> Rec (y, t, e)) 
 
-and help (e', x) vars e2 = (* TODO: rename *)
-  let rec help_rec vars new_vars e2 overshadowed =
-    let subst_dec decs e1 y f = 
-      let e1' = subst (e', x) e1 in
-      if x = y then 
-        help_rec decs ((f (e1', y))::new_vars) e2 true
-      else if not (member y (free_vars e')) || overshadowed then 
-        help_rec decs ((f (e1', y))::new_vars) e2 overshadowed
-      else 
-        let y' = fresh_var y in
-        let e2' = subst (Var y', y) e2 in
-        help_rec decs ((f (e1', y'))::new_vars) e2' overshadowed
-    in 
-    match vars with 
-    | [] -> 
-        let e2' = if overshadowed then e2 else subst (e', x) e2 in
-        (new_vars, e2') (* TODO: decide to reverse back to og order or not *)
-    | h::t -> 
-        match h with 
-        | Val (e1, y) -> subst_dec t e1 y (fun (e, ds) -> Val (e, ds)) 
-        | ByName (e1, y) -> subst_dec t e1 y (fun (e, ds) -> ByName (e, ds)) 
-        | Valtuple (e1, ns) -> 
-            let e1' = subst (e', x) e1 in
-            if member x ns then 
-              help_rec t (Valtuple(e1', ns)::new_vars) e2 true
-            else 
-              let fv = free_vars e' in
-              let rec rename l ns' e2' = 
-                match l with 
-                | [] -> help_rec t (Valtuple(e1', List.rev ns')::new_vars) e2' overshadowed
-                | y::t -> 
-                    if not (member y fv) then 
-                      rename t (y::ns') e2'
-                    else 
-                      let y' = fresh_var y in
-                      let e2' = subst (Var y', y) e2' in
-                      rename t (y'::ns') e2'
-              in
-              rename ns [] e2 
-  in
-  help_rec (List.rev vars) [] e2 false
 
 let eval_tests : (exp * exp) list = [
   (parse_exp "true && true && true;", parse_exp "true;");
