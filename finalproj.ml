@@ -339,7 +339,9 @@ let free_vars_tests : (exp * name list) list = [
   (parse_exp "let val f = fn x => fn y => x y in f x 10 end;", ["x"]); 
   (parse_exp "let fun g f : int = let name f1 = fn x => f x + y in f 70 end in g f end;", ["y"; "f"]);
   (parse_exp "let fun test (x : int): int = 50 in test 1 end;", []);
-  (parse_exp "(if true then 3 else 5) : int;", []) 
+  (parse_exp "(if true then 3 else 5) : int;", []);
+  (* New Tests *)
+  (parse_exp "let val (x, y) = (x, 10) val (u, v) = (x + y, y) in u + v end;", []);
 ]
 
 (* Q1  : Find the free variables in an expression *)
@@ -354,24 +356,18 @@ let rec free_vars (e : exp) : name list =
   | Var x -> [x]
   | Anno (e, _) -> free_vars e
   | Let (l, e) -> 
-    let bv = find_bounded_vars l
-    and el = decs_exps l in
+    let bv = union_list (List.map find_bounded_vars l)
+    and el = List.map get_exp l in
     union (union_list (List.map free_vars el)) (delete bv (free_vars e))
   | _ -> []
+and find_bounded_vars dec = 
+  match dec with 
+  | Val (e, x) | ByName (e, x) -> [x]
+  | Valtuple (e, xs) -> xs 
+and get_exp d = 
+  let Val (e, _) | Valtuple (e, _) | ByName (e, _) = d 
+  in e
 
-and find_bounded_vars l =
-  match l with
-  | [] -> []
-  | h::t -> 
-    match h with 
-    | Val (e, x)
-    | ByName (e, x) -> x::(find_bounded_vars t)
-    | Valtuple (e, xs) -> xs @ (find_bounded_vars t)
-and decs_exps l = 
-  let get_exp d = 
-    let Val (e, _) | Valtuple (e, _) | ByName (e, _) = d in e
-  in
-  List.map get_exp l 
 
 let unused_vars_tests : (exp * name list) list = [
   (parse_exp valid_program_1, []);
@@ -393,15 +389,21 @@ let unused_vars_tests : (exp * name list) list = [
   (parse_exp "let val x = true in let val y = 4 in x + 5 end end;", ["y"]);
   (parse_exp "let val x = 3 in (let val x = 4 in x + x end) end;", ["x"]); (* first occurence of x is unused *)
   (parse_exp "let val x = 2 name y = 3 in x + 2 end;", ["y"]); 
-  (parse_exp "let val x = 1 val x = 1 in x + 1 end;", []);
-  (parse_exp "let val x = 5 val (x,y) = (3,4) in x end;", ["y"]);
-  (parse_exp "let name x = true name x = 1 in x end;", []);
+  (parse_exp "let val x = 1 val x = 1 in x + 1 end;", ["x"]);
+  (parse_exp "let val x = 5 val (x,y) = (3,4) in x end;", ["x";"y"]);
+  (parse_exp "let name x = true name x = 1 in x end;", ["x"]);
   (parse_exp "(fn y => 2) true;", ["y"]);
   (parse_exp "let fun fact (x : int) : int = if x = 0 then 1 else x * fact(x - 1) in fact 5 end;", []);
   (parse_exp "let fun test ( x : int ) : int = 3 in 4 end;", ["test"; "x"]); 
   (parse_exp "(fn y => let val y = 2 in 3 + y end) true;", ["y"]);
   (parse_exp "10 * 10 + 33;", []); 
-  (parse_exp "let val f = let val ten = 10 in (fn y => ten) : int -> int end in f 55 end;", ["y"])
+  (parse_exp "let val f = let val ten = 10 in (fn y => ten) : int -> int end in f 55 end;", ["y"]);
+  (* New Tests *)
+  (parse_exp "let val (x,y,z) = (1,2,3) 
+              in let val (x,y,z) = (3,4,5) in x+y+z end 
+              end;", ["x"; "y"; "z"]);
+  (parse_exp "let val (x, y) = (x, y) val (u, v) = (x + y, y) in u + v end;", []);
+  (parse_exp "let val x = 3 val y = x val z = 1 in 4 end;", ["y";"z"]);
 ]
 
 (* Q2  : Check variables are in use *)
@@ -414,11 +416,15 @@ let rec unused_vars (e : exp) : name list =
   | Anno (e, _) -> unused_vars e
   | Fn (x, _, e) -> union (delete (free_vars e) [x]) (unused_vars e)
   | Rec (_, _, e) -> unused_vars e (* TODO: findout why Fn func doesnt work *)
-  | Let (l, e) -> 
-      let bv = find_bounded_vars l
-      and fv = free_vars e 
-      and el = decs_exps l in
-      union (union (delete fv bv) (unused_vars e)) (union_list (List.map unused_vars el))
+  | Let (ds, e) -> 
+    begin match ds with
+      | [] -> unused_vars e 
+      | d::ds' -> 
+        let bv = find_bounded_vars d
+        and fv = free_vars (Let (ds', e))
+        and e' = get_exp d in
+        union (union (delete fv bv) (unused_vars (Let (ds', e)))) (unused_vars e')
+    end
   | _ -> []
 
 
