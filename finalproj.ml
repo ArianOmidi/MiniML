@@ -477,7 +477,7 @@ let rec subst ((e', x) : exp * name) (e : exp) : exp =
       let new_e = subst (Var y', y) e in
       Rec (y', t,  subst (e', x) new_e)
 
-and help (e', x) vars e2 =
+and help (e', x) vars e2 = (* TODO: rename *)
   let rec help_rec vars new_vars e2 overshadowed =
     let subst_dec decs e1 y f = 
       let e1' = subst (e', x) e1 in
@@ -656,6 +656,9 @@ let infer_tests : ((context * exp) * typ) list = [
   ((Ctx([]), parse_exp "let val x = 4 name x = true val y = x in y end;"), TBool);
   ((Ctx([]), parse_exp "let val x = 4 name x = true val y = x in x || false end;"), TBool);
   ((Ctx([]), parse_exp "(fn x : int => if x = 0 then true else false);"), TArrow(TInt, TBool));
+  (* New Tests *)
+  ((Ctx([]), parse_exp "let val a = 4 val a = true in a end;"), TBool);
+
 ]
 
 (* Q5  : Type an expression *)
@@ -665,7 +668,10 @@ let rec infer (ctx : context) (e : exp) : typ = (* TODO: check if adding a rec i
   match e with
   | Int _ -> TInt
   | Bool _ -> TBool
-  | Var x -> ctx_lookup ctx x
+  | Var x -> 
+    begin try ctx_lookup ctx x with
+      NotFound -> type_fail "Variable \"" ^ x ^ "\" not found."
+    end
   | If (e, e1, e2) ->
     begin match infer ctx e with
       | TBool -> 
@@ -692,7 +698,7 @@ let rec infer (ctx : context) (e : exp) : typ = (* TODO: check if adding a rec i
       else type_fail "Expressions in math operations must be of type TInt"
     | And | Or -> 
       if (typ_eq t1 TBool) && (typ_eq t2 TBool) then TBool
-      else type_fail "Expressions in boolean operations must be of type TInt"
+      else type_fail "Expressions in boolean operations must be of type TBool"
     | Negate -> 
       if (typ_eq t1 TInt) then TInt
       else type_fail "Expression in the negate operation must be of type TInt"  
@@ -726,7 +732,7 @@ let rec infer (ctx : context) (e : exp) : typ = (* TODO: check if adding a rec i
         | TProduct ts ->
           let xt_pairs = List.combine xs ts in 
           infer_decs ds' (extend_list ctx xt_pairs)
-        | _ -> type_fail "Expected type TProduct"        
+        | _ -> type_fail "Valtuple expression must be of type TProduct"        
     in
     infer (infer_decs ds ctx) e
   
@@ -735,14 +741,18 @@ let unify_tests : ((typ * typ) * unit) list = [
   (* Not Unifiable *)
   ((TBool, TVar(ref (Some TInt))), ()); 
   ((TInt, TArrow(TBool, TInt)), ());
+  ((TProduct [TBool; fresh_tvar ()], TProduct [TBool; TInt; TInt]), ());
+  ((TProduct [TBool; fresh_tvar ()], TProduct [TInt; fresh_tvar ()]), ());
   (* Unifiable *)
   ((TInt, TInt), ());
   ((TBool, TBool), ());
   ((fresh_tvar (), TArrow(TBool, TInt)), ());
+  ((TArrow (fresh_tvar (), TBool), TArrow (TInt, TBool)), ());
+  ((TProduct [TArrow(fresh_tvar (), TBool); fresh_tvar ()], TProduct [fresh_tvar (); TInt]), ());
+  ((TArrow(TBool, TProduct [TInt; TInt]), TArrow(fresh_tvar (), fresh_tvar ())), ());
 ]
 
 (* find the next function for Q5 *)
-(* Q6  : Unify two types *)
 (* Q6  : Unify two types *)
 let rec unify (ty1 : typ) (ty2 : typ) : unit =
   let rec check_occ a t = 
@@ -764,14 +774,17 @@ let rec unify (ty1 : typ) (ty2 : typ) : unit =
   | TInt, TInt -> ()
   | TBool, TBool -> ()
   | TArrow (t1, t2), TArrow (t1', t2') -> unify t1 t1'; unify t2 t2'
-  | TProduct ts, TProduct ts' ->  List.iter2 unify ts ts'
+  | TProduct ts, TProduct ts' ->  
+    begin try List.iter2 unify ts ts' with 
+      Invalid_argument _ -> type_fail "TProducts are not of the same size" 
+    end
   | TVar x, TVar x' -> 
-      begin match !x, !x' with 
-        | Some t, Some t' -> unify t t'
-        | None, Some t -> x := Some t
-        | Some t, None -> x' := Some t
-        | None, None -> ()
-      end
+    begin match !x, !x' with 
+      | Some t, Some t' -> unify t t'
+      | None, Some t -> x := Some t
+      | Some t, None -> x' := Some t
+      | None, None -> ()
+    end
   | TVar x, _ -> unify_tvar x ty2
   | _, TVar x -> unify_tvar x ty1
   | _, _ -> type_fail "Types are not unifiable"
