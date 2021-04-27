@@ -341,7 +341,7 @@ let free_vars_tests : (exp * name list) list = [
   (parse_exp "let fun test (x : int): int = 50 in test 1 end;", []);
   (parse_exp "(if true then 3 else 5) : int;", []);
   (* New Tests *)
-  (parse_exp "let val (x, y) = (x, 10) val (u, v) = (x + y, y) in u + v end;", []);
+  (parse_exp "let val (x, y) = (x, 10) val (u, v) = (x + y, y) in u + v end;", ["x"]);
 ]
 
 (* Q1  : Find the free variables in an expression *)
@@ -355,10 +355,14 @@ let rec free_vars (e : exp) : name list =
   | Apply (e1, e2) -> union (free_vars e1) (free_vars e2)
   | Var x -> [x]
   | Anno (e, _) -> free_vars e
-  | Let (l, e) -> 
-    let bv = union_list (List.map find_bounded_vars l)
-    and el = List.map get_exp l in
-    union (union_list (List.map free_vars el)) (delete bv (free_vars e))
+  | Let (ds, e) -> 
+    begin match ds with
+      | [] -> free_vars e 
+      | d::ds' -> 
+        let bv = find_bounded_vars d
+        and e' = get_exp d in
+        union (free_vars e') (delete bv (free_vars (Let (ds', e))))
+    end
   | _ -> []
 and find_bounded_vars dec = 
   match dec with 
