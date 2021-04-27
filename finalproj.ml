@@ -643,107 +643,6 @@ let rec eval : exp -> exp =
     result
 
 
-let infer_tests : ((context * exp) * typ) list = [
-  ((Ctx([]), parse_exp "2 + 3;"), TInt);
-  ((Ctx([]), parse_exp "2 < 3;"), TBool);
-  ((Ctx([]), parse_exp "69 + 3 < 44;"), TBool);
-  (*((Ctx([]), parse_exp "if 69 + 3 < 44 then 32 else true;"), (*We are expecting an error here*) TInt);*)
-  ((Ctx([]), parse_exp "if 69 + 3 < 44 then 32 else 69;"), TInt);
-  ((Ctx([]), parse_exp "(fn x : bool => x) true;"), TBool);
-  ((Ctx([]), parse_exp "(fn x : int => x + 2) 3;"), TInt);
-  (*((Ctx([]), parse_exp "(fn x : bool => x + 2) true;"), (*We are expecting an error here*) TInt);*)
-  ((Ctx([]), parse_exp "(fn x : bool => if x then 54 else 69) true;"), TInt); 
-  ((Ctx([]), parse_exp valid_program_2), TInt);
-  ((Ctx([]), parse_exp valid_program_3), TInt);
-  ((Ctx([]), parse_exp valid_program_4), TInt);
-  ((Ctx([]), parse_exp valid_program_5), TInt);
-  ((Ctx([]), parse_exp valid_program_6), TInt);
-  ((Ctx([]), parse_exp valid_program_7), TInt);
-  ((Ctx([]), parse_exp valid_program_8), TInt);
-  ((Ctx([]), parse_exp valid_program_9), TInt);
-  ((Ctx([]), parse_exp "let val (x,y) = (3 + 2, true) in if y then x else x + 2 end;"), TInt);
-  ((Ctx([]), parse_exp "let val x = 4 name x = true val y = x in y end;"), TBool);
-  ((Ctx([]), parse_exp "let val x = 4 name x = true val y = x in x || false end;"), TBool);
-  ((Ctx([]), parse_exp "(fn x : int => if x = 0 then true else false);"), TArrow(TInt, TBool));
-  (* New Tests *)
-  ((Ctx([]), parse_exp "let val a = 4 val a = true in a end;"), TBool);
-
-]
-
-(* Q5  : Type an expression *)
-(* Q7* : Implement the argument type inference
-         For this question, move this function below the "unify". *)
-let rec infer (ctx : context) (e : exp) : typ = (* TODO: check if adding a rec is okay *)
-  match e with
-  | Int _ -> TInt
-  | Bool _ -> TBool
-  | Var x -> 
-    begin try ctx_lookup ctx x with
-      NotFound -> type_fail "Variable \"" ^ x ^ "\" not found."
-    end
-  | If (e, e1, e2) ->
-    begin match infer ctx e with
-      | TBool -> 
-        let t1 = infer ctx e1 
-        and t2 = infer ctx e2 in
-        if typ_eq t1 t2 then
-          t1
-        else type_fail "The consequent and alternative of the If statment have diffrent types"
-      | _ -> type_fail "Expected TBool"
-    end 
-  | Primop (op, es) -> (* TODO: do correctly *)
-    let (t1, t2) = 
-      match es with 
-      | e1::e2::t -> (infer ctx e1, infer ctx e2)
-      | [e] -> let t = infer ctx e in (t, t)
-      | [] -> type_fail "Primitive operation has no expressions" 
-    in
-    begin match op with
-    | Equals | NotEquals | LessThan | LessEqual | GreaterThan | GreaterEqual -> 
-      if (typ_eq t1 TInt) && (typ_eq t2 TInt) then TBool
-      else type_fail "Expressions in comparision operations must be of type TInt"
-    | Plus | Minus | Times | Div ->
-      if (typ_eq t1 TInt) && (typ_eq t2 TInt) then TInt
-      else type_fail "Expressions in math operations must be of type TInt"
-    | And | Or -> 
-      if (typ_eq t1 TBool) && (typ_eq t2 TBool) then TBool
-      else type_fail "Expressions in boolean operations must be of type TBool"
-    | Negate -> 
-      if (typ_eq t1 TInt) then TInt
-      else type_fail "Expression in the negate operation must be of type TInt"  
-    end  
-  | Tuple es -> TProduct (List.map (infer ctx) es)
-  | Fn (x, t, e) -> 
-    begin match t with 
-      | Some t -> TArrow (t, infer (extend ctx (x, t)) e)
-      | None -> type_fail "Function is not typed"
-    end
-  | Rec (f, t, e) -> infer (extend ctx (f, t)) e
-  | Apply (f, e) -> 
-    begin match infer ctx f with 
-      | TArrow (t, t') -> 
-        if typ_eq t (infer ctx e) then t'
-        else type_fail "Function and expression have different types in Apply"
-      | _ -> type_fail "Invalid type for function" (* Should never get here *)
-    end
-  | Anno (e, t) -> infer ctx e
-  | Let (ds, e) -> 
-    let rec infer_decs ds ctx =
-    match ds with
-    | [] -> ctx
-    | d::ds' ->
-      match d with 
-      | Val (e, x) | ByName (e, x) -> (* TODO: clean up *)
-        let t = infer ctx e in
-        infer_decs ds' (extend ctx (x, t))
-      | Valtuple (e, xs) -> (* TODO: clean up *)
-        match infer ctx e with 
-        | TProduct ts ->
-          let xt_pairs = List.combine xs ts in 
-          infer_decs ds' (extend_list ctx xt_pairs)
-        | _ -> type_fail "Valtuple expression must be of type TProduct"        
-    in
-    infer (infer_decs ds ctx) e
   
 
 let unify_tests : ((typ * typ) * unit) list = [
@@ -797,6 +696,139 @@ let rec unify (ty1 : typ) (ty2 : typ) : unit =
   | TVar x, _ -> unify_tvar x ty2
   | _, TVar x -> unify_tvar x ty1
   | _, _ -> type_fail "Types are not unifiable"
+
+
+let infer_tests : ((context * exp) * typ) list = [
+  ((Ctx([]), parse_exp "2 + 3;"), TInt);
+  ((Ctx([]), parse_exp "2 < 3;"), TBool);
+  ((Ctx([]), parse_exp "69 + 3 < 44;"), TBool);
+  ((Ctx([]), parse_exp "if 69 + 3 < 44 then 32 else 69;"), TInt);
+  ((Ctx([]), parse_exp "(fn x : bool => x) true;"), TBool);
+  ((Ctx([]), parse_exp "(fn x : int => x + 2) 3;"), TInt);
+  ((Ctx([]), parse_exp "(fn x : bool => if x then 54 else 69) true;"), TInt); 
+  ((Ctx([]), parse_exp valid_program_2), TInt);
+  ((Ctx([]), parse_exp valid_program_3), TInt);
+  ((Ctx([]), parse_exp valid_program_4), TInt);
+  ((Ctx([]), parse_exp valid_program_5), TInt);
+  ((Ctx([]), parse_exp valid_program_6), TInt);
+  ((Ctx([]), parse_exp valid_program_7), TInt);
+  ((Ctx([]), parse_exp valid_program_8), TInt);
+  ((Ctx([]), parse_exp valid_program_9), TInt);
+  ((Ctx([]), parse_exp "let val (x,y) = (3 + 2, true) in if y then x else x + 2 end;"), TInt);
+  ((Ctx([]), parse_exp "let val x = 4 name x = true val y = x in y end;"), TBool);
+  ((Ctx([]), parse_exp "let val x = 4 name x = true val y = x in x || false end;"), TBool);
+  ((Ctx([]), parse_exp "(fn x : int => if x = 0 then true else false);"), TArrow(TInt, TBool));
+  (* New Tests *)
+  ((Ctx([]), parse_exp "let val a = 4 val a = true in a end;"), TBool);
+]
+
+
+
+(* Q5  : Type an expression *)
+(* Q7* : Implement the argument type inference
+         For this question, move this function below the "unify". *)
+let rec infer (ctx : context) (e : exp) : typ = (* TODO: check if adding a rec is okay *)
+  let rec remove_tvars t = 
+    match t with 
+    | TInt -> TInt
+    | TBool -> TBool
+    | TArrow (t1, t2) -> TArrow (remove_tvars t1, remove_tvars t2)
+    | TProduct ts -> TProduct (List.map remove_tvars ts) 
+    | TVar x -> 
+        match !x with       
+        | Some t -> remove_tvars t
+        | None -> t 
+  in 
+  match e with
+  | Int _ -> TInt
+  | Bool _ -> TBool
+  | Var x -> 
+      begin try 
+          let ty = ctx_lookup ctx x in remove_tvars ty
+        with
+          NotFound -> type_fail ("Variable \"" ^ x ^ "\" not found.")
+      end
+  | If (e, e1, e2) ->
+      begin try unify (infer ctx e) TBool; 
+          let t1 = infer ctx e1 
+          and t2 = infer ctx e2 in
+          begin try unify t1 t2; t1 with 
+              TypeError _ -> type_fail "The consequent and alternative of the If statment have diffrent types"
+          end 
+        with
+          TypeError _ -> type_fail "Expected TBool"
+      end 
+  | Primop (op, es) -> (* TODO: do correctly *)
+      let (t1, t2) = 
+        match es with 
+        | e1::e2::t -> (infer ctx e1, infer ctx e2)
+        | [e] -> let t = infer ctx e in (t, t)
+        | [] -> type_fail "Primitive operation has no expressions" 
+      in
+      begin match op with
+        | Equals | NotEquals | LessThan | LessEqual | GreaterThan | GreaterEqual ->
+            begin try unify t1 TInt; unify t2 TInt; TBool with 
+                TypeError _ -> type_fail "Expressions in comparision operations must be of type TInt"
+            end
+        | Plus | Minus | Times | Div ->
+            begin try unify t1 TInt; unify t2 TInt; TInt with 
+                TypeError _ -> type_fail "Expressions in math operations must be of type TInt"
+            end
+
+        | And | Or -> 
+            begin try unify t1 TBool; unify t2 TBool; TBool with 
+                TypeError _ -> type_fail "Expressions in boolean operations must be of type TBool"
+            end
+        | Negate -> 
+            begin try unify t1 TInt; TInt with 
+                TypeError _ -> type_fail "Expression in the negate operation must be of type TInt"  
+            end
+      end  
+  | Tuple es -> TProduct (List.map (infer ctx) es)
+  | Fn (x, t, e) -> 
+      begin match t with 
+        | Some t -> TArrow (t, infer (extend ctx (x, t)) e)
+        | None -> 
+            let tv = 
+              try ctx_lookup ctx x with
+                NotFound -> fresh_tvar ()
+            in
+            remove_tvars (TArrow (tv, infer (extend ctx (x, tv)) e))
+      end
+  | Rec (f, t, e) -> infer (extend ctx (f, t)) e
+  | Apply (f, e) -> 
+      begin try 
+          let ft = infer ctx f in 
+          unify ft (TArrow (infer ctx e, fresh_tvar ()));
+          begin try 
+              match ft with 
+              | TArrow (_, t') -> remove_tvars t' 
+              | _ -> raise Invalid_argument "Illegal type for function" (* Should never get here *)
+            with 
+              TypeError _ -> type_fail "Function and expression have different types in Apply"
+          end
+        with
+          TypeError _ -> type_fail "Invalid type for function" 
+      end 
+  | Anno (e, t) -> infer ctx e
+  | Let (ds, e) -> 
+      let rec infer_decs ds ctx =
+        match ds with
+        | [] -> ctx
+        | d::ds' ->
+            match d with 
+            | Val (e, x) | ByName (e, x) -> 
+                let t = infer ctx e in
+                infer_decs ds' (extend ctx (x, t))
+            | Valtuple (e, xs) -> 
+                match infer ctx e with 
+                | TProduct ts ->
+                    let xt_pairs = List.combine xs ts in 
+                    infer_decs ds' (extend_list ctx xt_pairs)
+                | _ -> type_fail "Valtuple expression must be of type TProduct"        
+      in
+      infer (infer_decs ds ctx) e
+
 
 (* Now you can play with the language that you've implemented! *)
 let execute (s: string) : unit =
