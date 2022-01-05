@@ -4,7 +4,7 @@
 <!-- ABOUT THE PROJECT -->
 ## About
 
-A miniture implementation of the OCaml language, with simple code analysis tools, an interpreter (which evaluates an expression), a type checker, and a type inference engine.
+A miniature implementation of the OCaml language, with simple code analysis tools, an interpreter (which evaluates an expression), a type checker, and a type inference engine.
 
 ### Features:
 * Code Analysis Tools
